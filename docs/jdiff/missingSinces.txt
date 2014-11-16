@@ -1,0 +1,37 @@
+MISSING @SINCE TAG: org.apache.hadoop.mapred.lib.BinaryPartitioner Class
+NO DOC BLOCK: org.apache.hadoop.mapred.HDFSMonitorThread Class
+MISSING @SINCE TAG: org.apache.hadoop.mapred.JobTracker.SafeModeAction Class
+NO DOC BLOCK: org.apache.hadoop.security.authentication.util.KerberosUtil Class
+MISSING @SINCE TAG: org.apache.hadoop.io.PositionInputStream Class
+MISSING @SINCE TAG: org.apache.hadoop.util.PureJavaCrc32 Class
+MISSING @SINCE TAG: org.apache.hadoop.io.ReadaheadPool Class
+MISSING @SINCE TAG: org.apache.hadoop.io.ReadaheadPool.ReadaheadRequest Interface
+MISSING @SINCE TAG: org.apache.hadoop.io.retry.RetryPolicies.MultipleLinearRandomRetry Class
+MISSING @SINCE TAG: org.apache.hadoop.io.retry.RetryPolicies.MultipleLinearRandomRetry.Pair Class
+NO DOC BLOCK: org.apache.hadoop.io.retry.RetryUtils Class
+MISSING @SINCE TAG: org.apache.hadoop.mapred.SafeModeException Class
+NO DOC BLOCK: org.apache.hadoop.io.retry.RetryProxy Method create(java.lang.Class, java.lang.Object, org.apache.hadoop.io.retry.RetryPolicy, java.util.Map)
+MISSING @SINCE TAG: org.apache.hadoop.ipc.RPC Method getProxy(java.lang.Class, long, java.net.InetSocketAddress, org.apache.hadoop.security.UserGroupInformation, org.apache.hadoop.conf.Configuration, javax.net.SocketFactory, int, org.apache.hadoop.io.retry.RetryPolicy)
+NO DOC BLOCK: org.apache.hadoop.mapred.JobTracker Method isInSafeMode()
+MISSING @SINCE TAG: org.apache.hadoop.security.SecurityUtil Method openSecureHttpConnection(java.net.URL)
+MISSING @SINCE TAG: org.apache.hadoop.io.nativeio.NativeIO Method posixFadviseIfPossible(java.io.FileDescriptor, long, long, int)
+MISSING @SINCE TAG: org.apache.hadoop.mapred.AdminOperationsProtocol Method setSafeMode(org.apache.hadoop.mapred.JobTracker.SafeModeAction)
+NO DOC BLOCK: org.apache.hadoop.mapred.JobTracker Method setSafeMode(org.apache.hadoop.mapred.JobTracker.SafeModeAction)
+MISSING @SINCE TAG: org.apache.hadoop.mapred.JobTracker Method submitJob(org.apache.hadoop.mapred.JobID, java.lang.String, org.apache.hadoop.security.UserGroupInformation, org.apache.hadoop.security.Credentials, boolean)
+MISSING @SINCE TAG: org.apache.hadoop.io.nativeio.NativeIO Method syncFileRangeIfPossible(java.io.FileDescriptor, long, long, int)
+NO DOC BLOCK: org.apache.hadoop.ipc.Client Field IPC_CLIENT_CONNECT_MAX_RETRIES_DEFAULT
+NO DOC BLOCK: org.apache.hadoop.ipc.Client Field IPC_CLIENT_CONNECT_MAX_RETRIES_KEY
+NO DOC BLOCK: org.apache.hadoop.mapred.JobClient Field MAPREDUCE_CLIENT_RETRY_POLICY_ENABLED_DEFAULT
+NO DOC BLOCK: org.apache.hadoop.mapred.JobClient Field MAPREDUCE_CLIENT_RETRY_POLICY_ENABLED_KEY
+NO DOC BLOCK: org.apache.hadoop.mapred.JobClient Field MAPREDUCE_CLIENT_RETRY_POLICY_SPEC_DEFAULT
+NO DOC BLOCK: org.apache.hadoop.mapred.JobClient Field MAPREDUCE_CLIENT_RETRY_POLICY_SPEC_KEY
+NO DOC BLOCK: org.apache.hadoop.io.nativeio.NativeIO Field POSIX_FADV_DONTNEED
+NO DOC BLOCK: org.apache.hadoop.io.nativeio.NativeIO Field POSIX_FADV_NOREUSE
+NO DOC BLOCK: org.apache.hadoop.io.nativeio.NativeIO Field POSIX_FADV_NORMAL
+NO DOC BLOCK: org.apache.hadoop.io.nativeio.NativeIO Field POSIX_FADV_RANDOM
+NO DOC BLOCK: org.apache.hadoop.io.nativeio.NativeIO Field POSIX_FADV_SEQUENTIAL
+NO DOC BLOCK: org.apache.hadoop.io.nativeio.NativeIO Field POSIX_FADV_WILLNEED
+NO DOC BLOCK: org.apache.hadoop.http.HttpServer Field SPNEGO_FILTER
+NO DOC BLOCK: org.apache.hadoop.io.nativeio.NativeIO Field SYNC_FILE_RANGE_WAIT_AFTER
+NO DOC BLOCK: org.apache.hadoop.io.nativeio.NativeIO Field SYNC_FILE_RANGE_WAIT_BEFORE
+NO DOC BLOCK: org.apache.hadoop.io.nativeio.NativeIO Field SYNC_FILE_RANGE_WRITE
