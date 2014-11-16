@@ -15,13 +15,13 @@ order to run this software in "diskless" mode.
 * **Filename** | **Configuration Parameter** | **Suggested value**
 * core-site.xml | fs.default.name | file:///
 * core-site.xml | hadoop.tmp.dir | Any location on the Lustre filesystem
-* mapred-site.xml | mapreduce.jobtracker.staging.root.dir | <lustre_mount_point>/user
-* mapred-site.xml | mapred.system.dir | <lustre_mount_point>/system
+* mapred-site.xml | mapreduce.jobtracker.staging.root.dir | {lustre\_mount\_point}/user
+* mapred-site.xml | mapred.system.dir | {lustre\_mount\_point}/system
 * mapred-site.xml | mapred.local.dir | Any directory on Lustre named "mapred_${host.name}"
 * mapred-site.xml | mapreduce.shuffle.link | Set to “true”
 * mapred-site.xml | hadoop.ln.cmd | Set to the full path for the system “ln” command
 * mapred-site.xml | mapred.diskless.client.mode | Set to “true”
-* hadoop-env.sh | HADOOP_OPTS Add | "-Dhost.name=`hostname -s`"
+* hadoop-env.sh | HADOOP_OPTS Add | "-Dhost.name=\`hostname -s\`"
 * hadoop-env.sh | "-XX:ErrorFile" and "-Xloggc" | Modify HADOOP\_NAMENODE\_OPTS,
   HADOOP\_JOBTRACKER\_OPTS, and HADOOP\_SECONDARYNAMENODE\_OPTS to point to
   non-volatile storage
