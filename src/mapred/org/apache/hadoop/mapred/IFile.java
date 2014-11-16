@@ -237,6 +237,7 @@ class IFile {
    * <code>IFile.Reader</code> to read intermediate map-outputs. 
    */
   public static class Reader<K extends Object, V extends Object> {
+
     private static final int DEFAULT_BUFFER_SIZE = 128*1024;
     private static final int MAX_VINT_SIZE = 9;
 

@@ -21,6 +21,7 @@ package org.apache.hadoop.io.compress;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.InputStream;
+import java.io.FileInputStream;
 
 import org.apache.hadoop.conf.Configurable;
 import org.apache.hadoop.conf.Configuration;
@@ -72,6 +73,13 @@ public class DefaultCodec implements Configurable, CompressionCodec {
                                   conf.getInt("io.file.buffer.size", 4*1024));
   }
 
+  public CompressionInputStream createInputStream(FileInputStream in, 
+                                                  Decompressor decompressor) 
+  throws IOException {
+    return new DecompressorStream(in, decompressor, 
+                                  conf.getInt("io.file.buffer.size", 4*1024));
+  }
+  
   public Class<? extends Decompressor> getDecompressorType() {
     return ZlibFactory.getZlibDecompressorType(conf);
   }

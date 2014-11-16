@@ -20,6 +20,7 @@ package org.apache.hadoop.io.compress;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.FileInputStream;
 import java.io.OutputStream;
 
 import org.apache.hadoop.conf.Configurable;
@@ -178,6 +179,42 @@ public class SnappyCodec implements Configurable, CompressionCodec {
         CommonConfigurationKeys.IO_COMPRESSION_CODEC_SNAPPY_BUFFERSIZE_DEFAULT));
   }
 
+  /**
+   * Create a {@link CompressionInputStream} that will read from the given
+   * input stream.
+   *
+   * @param in the stream to read compressed bytes from
+   * @return a stream to read uncompressed bytes from
+   * @throws IOException
+   */
+  //@Override
+  public CompressionInputStream createInputStream(FileInputStream in)
+      throws IOException {
+    return createInputStream(in, createDecompressor());
+  }
+
+  /**
+   * Create a {@link CompressionInputStream} that will read from the given
+   * {@link InputStream} with the given {@link Decompressor}.
+   *
+   * @param in           the stream to read compressed bytes from
+   * @param decompressor decompressor to use
+   * @return a stream to read uncompressed bytes from
+   * @throws IOException
+   */
+  //@Override
+  public CompressionInputStream createInputStream(FileInputStream in,
+                                                  Decompressor decompressor)
+      throws IOException {
+    if (!isNativeSnappyLoaded(conf)) {
+      throw new RuntimeException("native snappy library not available");
+    }
+
+    return new BlockDecompressorStream(in, decompressor, conf.getInt(
+        CommonConfigurationKeys.IO_COMPRESSION_CODEC_SNAPPY_BUFFERSIZE_KEY,
+        CommonConfigurationKeys.IO_COMPRESSION_CODEC_SNAPPY_BUFFERSIZE_DEFAULT));
+  }
+  
   /**
    * Get the type of {@link Decompressor} needed by this {@link CompressionCodec}.
    *

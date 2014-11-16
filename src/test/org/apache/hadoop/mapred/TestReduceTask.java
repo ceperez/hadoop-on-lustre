@@ -79,6 +79,7 @@ public class TestReduceTask extends TestCase {
     FileSystem localFs = FileSystem.getLocal(conf);
     FileSystem rfs = ((LocalFileSystem)localFs).getRaw();
     Path path = new Path(tmpDir, "data.in");
+    SegmentPath spath = new SegmentPath(path, rfs);
     IFile.Writer<Text, Text> writer = 
       new IFile.Writer<Text, Text>(conf, rfs, path, Text.class, Text.class,
                                    codec, null);
@@ -89,7 +90,7 @@ public class TestReduceTask extends TestCase {
     
     @SuppressWarnings("unchecked")
     RawKeyValueIterator rawItr = 
-      Merger.merge(conf, rfs, Text.class, Text.class, codec, new Path[]{path}, 
+      Merger.merge(conf, rfs, Text.class, Text.class, codec, new SegmentPath[]{spath}, 
                    false, conf.getInt("io.sort.factor", 100), tmpDir, 
                    new Text.Comparator(), new NullProgress(),null,null);
     @SuppressWarnings("unchecked") // WritableComparators are not generic

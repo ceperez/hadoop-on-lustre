@@ -21,6 +21,7 @@ package org.apache.hadoop.io.compress;
 import java.io.BufferedInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.FileInputStream;
 import java.io.OutputStream;
 
 import org.apache.hadoop.io.compress.bzip2.BZip2DummyCompressor;
@@ -117,6 +118,31 @@ public class BZip2Codec implements
     return createInputStream(in);
   }
 
+  /**
+  * Creates CompressionInputStream to be used to read off uncompressed data.
+  *
+  * @param in
+  *            The InputStream
+  * @return Returns CompressionInputStream for BZip2
+  * @throws java.io.IOException
+  *             Throws IOException
+  */
+  public CompressionInputStream createInputStream(FileInputStream in)
+      throws IOException {
+    return new BZip2CompressionInputStream(in);
+  }
+
+  /**
+  * This functionality is currently not supported.
+  *
+  * @throws java.lang.UnsupportedOperationException
+  *             Throws UnsupportedOperationException
+  */
+  public CompressionInputStream createInputStream(FileInputStream in,
+      Decompressor decompressor) throws IOException {
+    return createInputStream(in);
+  }
+  
   /**
   * This functionality is currently not supported.
   *

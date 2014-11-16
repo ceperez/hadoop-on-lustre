@@ -206,7 +206,8 @@ public class TeraSort extends Configured implements Tool {
     public void configure(JobConf job) {
       try {
         FileSystem fs = FileSystem.getLocal(job);
-        Path partFile = new Path(TeraInputFormat.PARTITION_FILENAME);
+	Path[] inputPaths = TeraInputFormat.getInputPaths(job);
+        Path partFile = new Path(inputPaths[0], TeraInputFormat.PARTITION_FILENAME);
         splitPoints = readPartitions(fs, partFile, job);
         trie = buildTrie(splitPoints, 0, splitPoints.length, new Text(), 2);
       } catch (IOException ie) {

@@ -19,11 +19,17 @@
 package org.apache.hadoop.mapred;
 
 import java.io.DataInput;
+import java.io.DataInputStream;
+import java.io.FileInputStream;
+import java.io.BufferedInputStream;
 import java.io.DataOutput;
 import java.io.File;
+import java.io.FileDescriptor;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.RandomAccessFile;
+import java.nio.channels.Channels;
 import java.net.URI;
 import java.net.URL;
 import java.net.URLClassLoader;
@@ -60,6 +66,8 @@ import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.DataInputBuffer;
 import org.apache.hadoop.io.IOUtils;
 import org.apache.hadoop.io.IntWritable;
+import org.apache.hadoop.io.ReadaheadPool;
+import org.apache.hadoop.io.ReadaheadPool.ReadaheadRequest;
 import org.apache.hadoop.io.RawComparator;
 import org.apache.hadoop.io.SequenceFile;
 import org.apache.hadoop.io.Writable;
@@ -71,17 +79,19 @@ import org.apache.hadoop.io.compress.CodecPool;
 import org.apache.hadoop.io.compress.CompressionCodec;
 import org.apache.hadoop.io.compress.Decompressor;
 import org.apache.hadoop.io.compress.DefaultCodec;
+import org.apache.hadoop.io.nativeio.NativeIO;
 import org.apache.hadoop.mapred.IFile.*;
 import org.apache.hadoop.mapred.Merger.Segment;
 import org.apache.hadoop.mapred.SortedRanges.SkipRangeIterator;
 import org.apache.hadoop.mapred.TaskTracker.TaskInProgress;
+import org.apache.hadoop.mapred.SegmentFileStatus;
+import org.apache.hadoop.mapred.SegmentPath;
 import org.apache.hadoop.mapreduce.TaskAttemptContext;
 import org.apache.hadoop.metrics2.MetricsBuilder;
 import org.apache.hadoop.util.Progress;
 import org.apache.hadoop.util.Progressable;
 import org.apache.hadoop.util.ReflectionUtils;
 import org.apache.hadoop.util.StringUtils;
-
 import org.apache.hadoop.mapred.FileOutputFormat;
 import org.apache.hadoop.mapreduce.security.SecureShuffleUtils;
 import org.apache.hadoop.metrics2.MetricsException;
@@ -109,6 +119,7 @@ class ReduceTask extends Task {
 
   private CompressionCodec codec;
 
+  private ReadaheadPool readaheadPool = ReadaheadPool.getInstance();
 
   { 
     getProgress().setStatus("reduce"); 
@@ -133,13 +144,13 @@ class ReduceTask extends Task {
   // by the file's size and path. In case of files with same size and different
   // file paths, the first parameter is considered smaller than the second one.
   // In case of files with same size and path are considered equal.
-  private Comparator<FileStatus> mapOutputFileComparator = 
-    new Comparator<FileStatus>() {
-      public int compare(FileStatus a, FileStatus b) {
-        if (a.getLen() < b.getLen())
+  private Comparator<SegmentFileStatus> mapOutputFileComparator = 
+    new Comparator<SegmentFileStatus>() {
+      public int compare(SegmentFileStatus a, SegmentFileStatus b) {
+        if (a.getFileStatus().getLen() < b.getFileStatus().getLen())
           return -1;
-        else if (a.getLen() == b.getLen())
-          if (a.getPath().toString().equals(b.getPath().toString()))
+        else if (a.getFileStatus().getLen() == b.getFileStatus().getLen())
+          if (a.getFileStatus().getPath().toString().equals(b.getFileStatus().getPath().toString()))
             return 0;
           else
             return -1; 
@@ -149,8 +160,8 @@ class ReduceTask extends Task {
   };
   
   // A sorted set for keeping a set of map output files on disk
-  private final SortedSet<FileStatus> mapOutputFilesOnDisk = 
-    new TreeSet<FileStatus>(mapOutputFileComparator);
+  private final SortedSet<SegmentFileStatus> mapOutputFilesOnDisk = 
+    new TreeSet<SegmentFileStatus>(mapOutputFileComparator);
 
   public ReduceTask() {
     super();
@@ -211,21 +222,21 @@ class ReduceTask extends Task {
   }
   
   // Get the input files for the reducer.
-  private Path[] getMapFiles(FileSystem fs, boolean isLocal) 
+  private SegmentPath[] getMapFiles(FileSystem fs, boolean isLocal) 
   throws IOException {
-    List<Path> fileList = new ArrayList<Path>();
+    List<SegmentPath> fileList = new ArrayList<SegmentPath>();
     if (isLocal) {
       // for local jobs
       for(int i = 0; i < numMaps; ++i) {
-        fileList.add(mapOutputFile.getInputFile(i));
+        fileList.add(new SegmentPath(mapOutputFile.getInputFile(i), fs));
       }
     } else {
       // for non local jobs
-      for (FileStatus filestatus : mapOutputFilesOnDisk) {
-        fileList.add(filestatus.getPath());
+      for (SegmentFileStatus filestatus : mapOutputFilesOnDisk) {
+        fileList.add(filestatus.getSegmentPath());
       }
     }
-    return fileList.toArray(new Path[0]);
+    return fileList.toArray(new SegmentPath[0]);
   }
 
   private class ReduceValuesIterator<KEY,VALUE> 
@@ -1039,9 +1050,14 @@ class ReduceTask extends Task {
       byte[] data;
       final boolean inMemory;
       long compressedSize;
+
+      public long offset = 0;
+      public long rawLength = 0;
+      public long partLength = 0;
       
       public MapOutput(TaskID mapId, TaskAttemptID mapAttemptId, 
-                       Configuration conf, Path file, long size) {
+                       Configuration conf, Path file, long size,
+                       long offset, long rawLength, long partLength) {
         this.mapId = mapId;
         this.mapAttemptId = mapAttemptId;
         
@@ -1052,6 +1068,10 @@ class ReduceTask extends Task {
         this.data = null;
         
         this.inMemory = false;
+
+        this.offset = offset;
+        this.rawLength = rawLength;
+        this.partLength = partLength;
       }
       
       public MapOutput(TaskID mapId, TaskAttemptID mapAttemptId, byte[] data, int compressedLength) {
@@ -1065,6 +1085,10 @@ class ReduceTask extends Task {
         this.compressedSize = compressedLength;
         
         this.inMemory = true;
+
+        this.offset = 0;
+        this.rawLength = data.length;
+        this.partLength = data.length;
       }
       
       public void discard() throws IOException {
@@ -1431,6 +1455,7 @@ class ReduceTask extends Task {
             // Rename the temporary file to the final file; 
             // ensure it is on the same partition
             tmpMapOutput = mapOutput.file;
+            LOG.debug("tmpMapOutput: " + tmpMapOutput.toString());
             filename = new Path(tmpMapOutput.getParent(), filename.getName());
             if (!localFileSys.rename(tmpMapOutput, filename)) {
               localFileSys.delete(tmpMapOutput, true);
@@ -1439,8 +1464,9 @@ class ReduceTask extends Task {
                   tmpMapOutput + " to " + filename);
             }
 
-            synchronized (mapOutputFilesOnDisk) {        
-              addToMapOutputFilesOnDisk(localFileSys.getFileStatus(filename));
+            synchronized (mapOutputFilesOnDisk) {  
+
+              addToMapOutputFilesOnDisk(new SegmentFileStatus(localFileSys.getFileStatus(filename), mapOutput.offset, mapOutput.rawLength, mapOutput.partLength));
             }
           }
 
@@ -1532,12 +1558,56 @@ class ReduceTask extends Task {
         
         // Check if this map-output can be saved in-memory
         boolean shuffleInMemory = ramManager.canFitInMemory(decompressedLength); 
-
+        
         // Shuffle
         MapOutput mapOutput = null;
+
+        // Seagate patch
+        boolean shuffleLink = conf.getBoolean("mapreduce.shuffle.link", false);
+        if (shuffleLink) {
+          if (LOG.isDebugEnabled()) {
+            LOG.debug("Shuffling " + decompressedLength + " bytes ("
+                    + compressedLength + " raw bytes) "
+                    + "to Link from " + mapOutputLoc.getTaskAttemptId());
+          }
+          String mapLocalDir = conf.get("mapred.local.dir");
+
+          if (mapLocalDir.endsWith("/")) {
+            //remove the last "/" if there is one in the path
+            mapLocalDir = mapLocalDir.substring(0, mapLocalDir.length() - 1);
+          }
+          Process process = null;
+          try {
+            //df -l only shows local file systems. 
+            process = Runtime.getRuntime().exec("/bin/df -l " + mapLocalDir);
+            if (process.waitFor() == 1) {
+            // Remote filesystem for mapred.local.dir. Link the Map output.
+            	//input.close();
+                mapOutput = shuffleToLink(mapOutputLoc, filename, input,
+                		(int)compressedLength, (int)decompressedLength, (int)reduce);
+                return mapOutput;
+            }
+            else
+                // Local filesytem for mapred.local.dir. No way to link the Map output.
+                LOG.warn("mapreduce.shuffle.link=true but mapred.local.dir is local. mapreduce.shuffle.link=true ignored");
+          }
+          catch (Exception e) {
+            System.out.println(e.toString());
+            e.printStackTrace();
+          }
+          finally {
+            // Close the process output handles cleanly.
+            process.getInputStream().close();
+            process.getOutputStream().close();
+            process.getErrorStream().close();
+          }
+          
+        }
+        // Seagate patch end
+        
         if (shuffleInMemory) {
           if (LOG.isDebugEnabled()) {
-            LOG.debug("Shuffling " + decompressedLength + " bytes (" + 
+            LOG.debug("shuffleInMemory: Shuffling " + decompressedLength + " bytes (" + 
                 compressedLength + " raw bytes) " + 
                 "into RAM from " + mapOutputLoc.getTaskAttemptId());
           }
@@ -1547,7 +1617,7 @@ class ReduceTask extends Task {
                                       (int)compressedLength);
         } else {
           if (LOG.isDebugEnabled()) {
-            LOG.debug("Shuffling " + decompressedLength + " bytes (" + 
+            LOG.debug("shuffleToDisk: Shuffling " + decompressedLength + " bytes (" + 
                 compressedLength + " raw bytes) " + 
                 "into Local-FS from " + mapOutputLoc.getTaskAttemptId());
           }
@@ -1557,6 +1627,237 @@ class ReduceTask extends Task {
         }
             
         return mapOutput;
+      }
+        // Seagate patch:
+      private MapOutput shuffleToLink(MapOutputLocation mapOutputLoc,
+                                      Path filename, InputStream input,
+                                      int mapOutputLength, int decompressedLength,
+                                      int reduce)
+        throws IOException, InterruptedException {
+        // Find out a suitable location for the output on local-filesystem
+        Path localFilename = 
+          lDirAlloc.getLocalPathForWrite(filename.toUri().getPath(), 
+                                         mapOutputLength, conf);
+
+        LOG.debug("shuffleToLink: local file = \"" + localFilename.toString() + "\"");
+
+
+        String query = mapOutputLoc.getOutputLocation().getQuery();
+        LOG.debug("shuffleToLink: query = \"" + query + "\"");
+        LOG.debug("shuffleToLink: outputLocation = \"" + mapOutputLoc.getOutputLocation().toString() + "\"");
+
+
+        String[] qureies=query.split("&");
+        String maphost=mapOutputLoc.getHost();
+        //String tmpDir = conf.get("hadoop.tmp.dir");
+        String mapredLocalDir = conf.get("mapred.local.dir");
+        /* In TaskRunner.java:setupChildMapredLocalDirs(Task t, JobConf conf),
+         * the mapred.local.dir variable is modified to "sandbox" this child
+         * task.  Break out of the sandbox by going up a few levels.  (These
+         * correspond to: /mapred/taskTracker/<user>/jobcache/<job>/<attempt>/)
+         * Drops you into the directory that holds the "mapred" dir. */
+        mapredLocalDir = mapredLocalDir + "/../../../../../../";
+
+        // Are we running diskless mode or with local storage for intermediate
+        // files?
+        boolean diskless = conf.getBoolean("mapred.diskless.client.mode", false);
+        String mapred_name = "mapred";
+        if (diskless) {
+            mapred_name = mapred_name + "_" + maphost;
+        }
+        
+        String user = conf.getUser();
+        LOG.debug("shuffleToLink: mapredLocalDir " + mapredLocalDir);
+        String lnCmd = conf.get("hadoop.ln.cmd");
+
+        String src = mapredLocalDir + "/" + mapred_name + "/taskTracker/"
+          + user + "/jobcache/"
+          + qureies[0].substring(qureies[0].indexOf('=') + 1) + "/"
+          + qureies[1].substring(qureies[1].indexOf('=') + 1) + "/output/file.out";
+        
+        String src_idx = mapredLocalDir + "/" + mapred_name + "/taskTracker/"
+          + user + "/jobcache/"
+          + qureies[0].substring(qureies[0].indexOf('=') + 1) + "/"
+          + qureies[1].substring(qureies[1].indexOf('=') + 1) + "/output/file.out.index";
+        
+        DataInputStream in;
+        RandomAccessFile src_idx_fp = new RandomAccessFile(src_idx, "r");
+        src_idx_fp.seek(8*3*reduce);
+        long offset = src_idx_fp.readLong();
+        long rawLength = src_idx_fp.readLong();
+        long partLength = src_idx_fp.readLong();
+        src_idx_fp.close();
+
+        long flen;
+        
+        boolean shuffleInMemory = ramManager.canFitInMemory((int)decompressedLength);
+        
+        boolean manageOsCacheInShuffle = conf.getBoolean("mapreduce.shuffle.manage.os.cache",
+            true);
+        int readaheadLength = conf.getInt("mapreduce.shuffle.readahead.bytes",
+            4 * 1024 * 1024);
+        
+        LOG.debug("shuffleInMemory: " + shuffleInMemory + " manageOsCacheInShuffle: " +
+            manageOsCacheInShuffle + " readaheadLength: " + readaheadLength);
+        
+        if (shuffleInMemory) {
+            LOG.debug(mapOutputLoc.getTaskAttemptId() + " Attempting to shuffle in memory with shuffle to link from host "
+                + mapOutputLoc.getHost() + ".");
+            // Reserve ram for the map-output
+            boolean createdNow = ramManager.reserve((int)decompressedLength, input);
+            
+            // Copy map-output into an in-memory buffer
+            byte[] shuffleData = new byte[(int)decompressedLength];
+            MapOutput mapOutput = 
+            new MapOutput(mapOutputLoc.getTaskId(), 
+                mapOutputLoc.getTaskAttemptId(), shuffleData, (int)mapOutputLength);
+            
+            int bytesRead = 0;
+            LOG.info(mapOutputLoc.getTaskAttemptId() + " Opening file " + src + " for reading for shuffle.  " + offset + " " + rawLength);
+            RandomAccessFile src_fp = new RandomAccessFile(src, "r");
+            in = new DataInputStream(Channels.newInputStream(src_fp.getChannel().position((int)offset)));
+            
+            FileDescriptor src_fd = src_fp.getFD();
+            
+            IFileInputStream checksumIn = 
+                new IFileInputStream(in, mapOutputLength);
+                
+            // Are map-outputs compressed?
+            if (codec != null) {
+                decompressor.reset();
+                input = codec.createInputStream(checksumIn, decompressor);
+            } else {
+                input = checksumIn;
+            }
+            
+            ReadaheadRequest curReadahead = null;
+            
+            try {
+                // Trigger readahead advisory
+                if (manageOsCacheInShuffle && readaheadPool != null) {
+                    curReadahead = readaheadPool.readaheadStream(src,
+                        src_fd, offset, readaheadLength,
+                        offset + partLength, curReadahead);
+                }
+                int n = input.read(shuffleData, 0, shuffleData.length);
+                while (n > 0) {
+                    bytesRead += n;
+                    shuffleClientMetrics.inputBytes(n);
+
+                    // indicate we're making progress
+                    reporter.progress();
+                    if (manageOsCacheInShuffle && readaheadPool != null) {
+                        curReadahead = readaheadPool.readaheadStream(src,
+                            src_fd, offset, readaheadLength,
+                            offset + partLength, curReadahead);
+                    }
+                    n = input.read(shuffleData, bytesRead, 
+                                (int)(shuffleData.length-bytesRead));
+                }
+            if (curReadahead != null) {
+            curReadahead.cancel();
+            }
+            // drop cache if possible
+            if (manageOsCacheInShuffle && partLength > 0) {
+                NativeIO.posixFadviseIfPossible(src_fd,
+                    offset, partLength,
+                    NativeIO.POSIX_FADV_DONTNEED);
+            }
+                
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("Read " + bytesRead + " bytes from map-output for " +
+                    mapOutputLoc.getTaskAttemptId());
+            }
+            
+            input.close();
+            } catch (IOException ioe) {
+                LOG.info("Failed to shuffle from " + mapOutputLoc.getTaskAttemptId(), 
+                        ioe);
+
+                // Inform the ram-manager
+                ramManager.closeInMemoryFile((int)decompressedLength);
+                ramManager.unreserve((int)decompressedLength);
+                
+                // Discard the map-output
+                try {
+                    mapOutput.discard();
+                } catch (IOException ignored) {
+                    LOG.info("Failed to discard map-output from " + 
+                            mapOutputLoc.getTaskAttemptId(), ignored);
+                }
+                mapOutput = null;
+                
+                input.close();
+                
+                // Re-throw
+                readError = true;
+                throw ioe;
+            }
+
+            // Close the in-memory file
+            ramManager.closeInMemoryFile((int)decompressedLength);
+
+            // Sanity check
+            if (bytesRead != decompressedLength) {
+              // Inform the ram-manager
+              ramManager.unreserve((int)decompressedLength);
+              
+              // Discard the map-output
+              try {
+                mapOutput.discard();
+              } catch (IOException ignored) {
+                // IGNORED because we are cleaning up
+                LOG.info("Failed to discard map-output from " + 
+                         mapOutputLoc.getTaskAttemptId(), ignored);
+              }
+              mapOutput = null;
+              // The .length() call below is super-expensive on lustre, but since
+              // this thread is about to be killed anyway, who cares?
+              flen = new File(localFilename.toString()).length();
+              throw new IOException("Incomplete map output received for " +
+                                    mapOutputLoc.getTaskAttemptId() + " from " +
+                                    localFilename.toString() + " (" + 
+                                    bytesRead + " instead of " + 
+                                    decompressedLength + ")" + " ondisk " + flen
+              );
+            }
+
+            // TODO: Remove this after a 'fix' for HADOOP-3647
+            if (LOG.isDebugEnabled()) {
+              if (rawLength > 0) {
+                DataInputBuffer dib = new DataInputBuffer();
+                dib.reset(shuffleData, 0, shuffleData.length);
+                LOG.debug("Rec #1 from " + mapOutputLoc.getTaskAttemptId() + 
+                    " -> (" + WritableUtils.readVInt(dib) + ", " + 
+                    WritableUtils.readVInt(dib) + ") from " + 
+                    mapOutputLoc.getHost());
+              }
+            }
+
+            return mapOutput;
+
+        } else {
+            input.close();
+            // Make a hardlink
+            MapOutput mapOutput =
+            new MapOutput(mapOutputLoc.getTaskId(), mapOutputLoc.getTaskAttemptId(),
+                            conf, localFileSys.makeQualified(localFilename),
+                            mapOutputLength, offset, rawLength, partLength);
+
+            File f = new File(src);
+            if(f.exists()) { 
+                LOG.debug("shuffleToLink: the src " + src + " EXIST!") ; 
+            }
+            String command = lnCmd + " " + src + " " + localFilename;
+            try {
+            LOG.debug("shuffleToLink: Command used for hardlink "+command);
+            Runtime.getRuntime().exec(command).waitFor();
+            } catch (InterruptedException e) {
+            e.printStackTrace();
+            }
+            return mapOutput;
+        }
+
       }
       
       private InputStream setupSecureConnection(MapOutputLocation mapOutputLoc, 
@@ -1651,7 +1952,6 @@ class ReduceTask extends Task {
       throws IOException, InterruptedException {
         // Reserve ram for the map-output
         boolean createdNow = ramManager.reserve(mapOutputLength, input);
-      
         // Reconnect if we need to
         if (!createdNow) {
           // Reconnect
@@ -1785,7 +2085,8 @@ class ReduceTask extends Task {
         MapOutput mapOutput = 
           new MapOutput(mapOutputLoc.getTaskId(), mapOutputLoc.getTaskAttemptId(), 
                         conf, localFileSys.makeQualified(localFilename), 
-                        mapOutputLength);
+                        mapOutputLength,
+                        0, mapOutputLength, mapOutputLength);
 
 
         // Copy data to local-disk
@@ -2449,14 +2750,16 @@ class ReduceTask extends Task {
               keyClass, valueClass, codec, null);
           try {
             Merger.writeFile(rIter, writer, reporter, job);
-            addToMapOutputFilesOnDisk(fs.getFileStatus(outputPath));
+            writer.close();
+            long len = fs.getFileStatus(outputPath).getLen();
+            addToMapOutputFilesOnDisk(new SegmentFileStatus(fs.getFileStatus(outputPath), 0, len, len));
           } catch (Exception e) {
             if (null != outputPath) {
               fs.delete(outputPath, true);
             }
             throw new IOException("Final merge failed", e);
           } finally {
-            if (null != writer) {
+            if (null != writer.out) {
               writer.close();
             }
           }
@@ -2475,10 +2778,10 @@ class ReduceTask extends Task {
       // segments on disk
       List<Segment<K,V>> diskSegments = new ArrayList<Segment<K,V>>();
       long onDiskBytes = inMemToDiskBytes;
-      Path[] onDisk = getMapFiles(fs, false);
-      for (Path file : onDisk) {
-        onDiskBytes += fs.getFileStatus(file).getLen();
-        diskSegments.add(new Segment<K, V>(job, fs, file, codec, keepInputs));
+      SegmentPath[] onDisk = getMapFiles(fs, false);
+      for (SegmentPath file : onDisk) {
+        onDiskBytes += fs.getFileStatus(file.getPath()).getLen();
+        diskSegments.add(new Segment<K, V>(job, fs, file.getPath(), file.getOffset(), file.getPartLength(), codec, keepInputs));
       }
       LOG.info("Merging " + onDisk.length + " files, " +
                onDiskBytes + " bytes from disk");
@@ -2569,7 +2872,7 @@ class ReduceTask extends Task {
       }    
     }
     
-    private void addToMapOutputFilesOnDisk(FileStatus status) {
+    private void addToMapOutputFilesOnDisk(SegmentFileStatus status) {
       synchronized (mapOutputFilesOnDisk) {
         mapOutputFilesOnDisk.add(status);
         mapOutputFilesOnDisk.notify();
@@ -2606,7 +2909,7 @@ class ReduceTask extends Task {
             if(exitLocalFSMerge) {//to avoid running one extra time in the end
               break;
             }
-            List<Path> mapFiles = new ArrayList<Path>();
+            List<SegmentPath> mapFiles = new ArrayList<SegmentPath>();
             long approxOutputSize = 0;
             int bytesPerSum = 
               reduceTask.getConf().getInt("io.bytes.per.checksum", 512);
@@ -2618,10 +2921,10 @@ class ReduceTask extends Task {
             // io.sort.factor files into 1.
             synchronized (mapOutputFilesOnDisk) {
               for (int i = 0; i < ioSortFactor; ++i) {
-                FileStatus filestatus = mapOutputFilesOnDisk.first();
+                SegmentFileStatus filestatus = mapOutputFilesOnDisk.first();
                 mapOutputFilesOnDisk.remove(filestatus);
-                mapFiles.add(filestatus.getPath());
-                approxOutputSize += filestatus.getLen();
+                mapFiles.add(filestatus.getSegmentPath());
+                approxOutputSize += filestatus.getPartLength();
               }
             }
             
@@ -2637,7 +2940,7 @@ class ReduceTask extends Task {
   
             // 2. Start the on-disk merge process
             Path outputPath = 
-              lDirAlloc.getLocalPathForWrite(mapFiles.get(0).toString(), 
+              lDirAlloc.getLocalPathForWrite(mapFiles.get(0).getPath().toString(),
                                              approxOutputSize, conf)
               .suffix(".merged");
             Writer writer = 
@@ -2651,7 +2954,7 @@ class ReduceTask extends Task {
               iter = Merger.merge(conf, rfs,
                                   conf.getMapOutputKeyClass(),
                                   conf.getMapOutputValueClass(),
-                                  codec, mapFiles.toArray(new Path[mapFiles.size()]), 
+                                  codec, mapFiles.toArray(new SegmentPath[mapFiles.size()]),
                                   true, ioSortFactor, tmpDir, 
                                   conf.getOutputKeyComparator(), reporter,
                                   spilledRecordsCounter, null);
@@ -2664,7 +2967,8 @@ class ReduceTask extends Task {
             }
             
             synchronized (mapOutputFilesOnDisk) {
-              addToMapOutputFilesOnDisk(localFileSys.getFileStatus(outputPath));
+	      FileStatus myFileStatus = localFileSys.getFileStatus(outputPath);
+              addToMapOutputFilesOnDisk(new SegmentFileStatus(myFileStatus, 0, myFileStatus.getLen(), myFileStatus.getLen()));
             }
             
             LOG.info(reduceTask.getTaskID() +
@@ -2785,7 +3089,7 @@ class ReduceTask extends Task {
         // Note the output of the merge
         FileStatus status = localFileSys.getFileStatus(outputPath);
         synchronized (mapOutputFilesOnDisk) {
-          addToMapOutputFilesOnDisk(status);
+          addToMapOutputFilesOnDisk(new SegmentFileStatus(status, 0, localFileSys.getFileStatus(outputPath).getLen(), localFileSys.getFileStatus(outputPath).getLen()));
         }
       }
     }

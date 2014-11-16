@@ -132,6 +132,21 @@ public class GzipCodec extends DefaultCodec {
                                   conf.getInt("io.file.buffer.size", 4*1024));
   }
 
+  public CompressionInputStream createInputStream(FileInputStream in)
+  throws IOException {
+    return createInputStream(in, null);
+  }
+
+  public CompressionInputStream createInputStream(FileInputStream in,
+                                                  Decompressor decompressor)
+  throws IOException {
+    if (decompressor == null) {
+      decompressor = createDecompressor();  // always succeeds (or throws)
+    }
+    return new DecompressorStream(in, decompressor,
+                                  conf.getInt("io.file.buffer.size", 4*1024));
+  }
+  
   public Decompressor createDecompressor() {
     return (ZlibFactory.isNativeZlibLoaded(conf))
       ? new GzipZlibDecompressor()

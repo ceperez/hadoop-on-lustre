@@ -81,7 +81,7 @@ public class TestDFSIO extends Configured implements Tool {
   private static final String DEFAULT_RES_FILE_NAME = "TestDFSIO_results.log";
   
   private static final long MEGA = 0x100000;
-  private static String TEST_ROOT_DIR = System.getProperty("test.build.data","/benchmarks/TestDFSIO");
+  private static String TEST_ROOT_DIR = System.getProperty("test.build.data","/var/mnt/lustre/hadoop/benchmarks/TestDFSIO");
   private static Path CONTROL_DIR = new Path(TEST_ROOT_DIR, "io_control");
   private static Path WRITE_DIR = new Path(TEST_ROOT_DIR, "io_write");
   private static Path READ_DIR = new Path(TEST_ROOT_DIR, "io_read");

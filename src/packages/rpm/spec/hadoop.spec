@@ -22,6 +22,7 @@
 %define release      @package.release@
 
 # Installation Locations
+%define _package_buildroot @package.buildroot@
 %define _prefix      @package.prefix@
 %define _bin_dir     %{_prefix}/bin
 %define _conf_dir    @package.conf.dir@
@@ -142,8 +143,13 @@ chmod 0755 ${RPM_BUILD_DIR}/%{_final_name}/sbin/hadoop-*
 #### INSTALL SECTION ####
 #########################
 %install
-mv ${RPM_BUILD_DIR}/%{_final_name}/etc/hadoop/* ${RPM_BUILD_DIR}%{_conf_dir}
-mv ${RPM_BUILD_DIR}/%{_final_name}/* ${RPM_BUILD_DIR}%{_prefix}
+mkdir -p %{_package_buildroot}/BUILDROOT/hadoop-1.0.3.16.STX-2.x86_64/%{_conf_dir}
+mkdir -p %{_package_buildroot}/BUILDROOT/hadoop-1.0.3.16.STX-2.x86_64/%{_prefix}
+mkdir -p %{_package_buildroot}/BUILDROOT/hadoop-1.0.3.16.STX-2.x86_64/var/log/hadoop
+mkdir -p %{_package_buildroot}/BUILDROOT/hadoop-1.0.3.16.STX-2.x86_64/var/run/hadoop
+mkdir -p %{_package_buildroot}/BUILDROOT/hadoop-1.0.3.16.STX-2.x86_64/etc/rc.d/init.d
+mv ${RPM_BUILD_DIR}/%{_final_name}/etc/hadoop/* %{_package_buildroot}/BUILDROOT/hadoop-1.0.3.16.STX-2.x86_64/%{_conf_dir}
+mv ${RPM_BUILD_DIR}/%{_final_name}/* %{_package_buildroot}/BUILDROOT/hadoop-1.0.3.16.STX-2.x86_64/%{_prefix}
 
 if [ "${RPM_BUILD_DIR}%{_conf_dir}" != "${RPM_BUILD_DIR}/%{_prefix}/conf" ]; then
   rm -rf ${RPM_BUILD_DIR}/%{_prefix}/etc

@@ -51,7 +51,7 @@ class Merger {
   RawKeyValueIterator merge(Configuration conf, FileSystem fs,
                             Class<K> keyClass, Class<V> valueClass, 
                             CompressionCodec codec,
-                            Path[] inputs, boolean deleteInputs, 
+                            SegmentPath[] inputs, boolean deleteInputs,
                             int mergeFactor, Path tmpDir,
                             RawComparator<K> comparator, Progressable reporter,
                             Counters.Counter readsCounter,
@@ -266,7 +266,7 @@ class Merger {
 
     
     public MergeQueue(Configuration conf, FileSystem fs, 
-                      Path[] inputs, boolean deleteInputs, 
+                      SegmentPath[] inputs, boolean deleteInputs,
                       CompressionCodec codec, RawComparator<K> comparator,
                       Progressable reporter) 
     throws IOException {
@@ -276,8 +276,8 @@ class Merger {
       this.comparator = comparator;
       this.reporter = reporter;
       
-      for (Path file : inputs) {
-        segments.add(new Segment<K, V>(conf, fs, file, codec, !deleteInputs));
+      for (SegmentPath file : inputs) {
+        segments.add(new Segment<K, V>(conf, fs, file.getPath(), file.getOffset(), file.getPartLength(), codec, !deleteInputs));
       }
       
       // Sort segments on file-lengths
